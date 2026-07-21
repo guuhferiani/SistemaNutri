@@ -32,9 +32,9 @@ export default async function handler(req) {
     // Inicializa o SDK
     const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
     
-    // Configura o modelo. gemini-1.5-flash é excelente para tasks estruturadas e JSON
+    // Configura o modelo. gemini-3.1-flash-lite
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.1-flash-lite',
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.2, // Temperatura mais baixa para garantir a estrutura

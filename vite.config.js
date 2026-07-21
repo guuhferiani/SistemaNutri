@@ -11,16 +11,28 @@ function localApiPlugin() {
     configureServer(server) {
       server.middlewares.use(express.json());
       server.middlewares.use('/api/gerar-plano', async (req, res) => {
-        if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+        }
         try {
           const { dados_do_paciente } = req.body;
-          if (!dados_do_paciente) return res.status(400).json({ error: 'Faltam os dados do paciente' });
-          if (!process.env.GOOGLE_API_KEY) return res.status(500).json({ error: 'API Key não configurada no servidor' });
+          if (!dados_do_paciente) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ error: 'Faltam os dados do paciente' }));
+          }
+          if (!process.env.GOOGLE_API_KEY) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ error: 'API Key não configurada no servidor' }));
+          }
           
           const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-          // O usuário pediu Gemini 3.1-flash, mas o correto da Google é gemini-1.5-flash
+          // O usuário pediu Gemini 3.1-flash, então usaremos gemini-3.1-flash-lite
           const model = genAI.getGenerativeModel({
-            model: 'gemini-1.5-flash',
+            model: 'gemini-3.1-flash-lite',
             generationConfig: {
               responseMimeType: 'application/json',
               temperature: 0.2,
@@ -60,13 +72,17 @@ O formato do JSON retornado deve seguir exatamente esta estrutura:
           let responseText = result.response.text();
           responseText = responseText.replace(/```json/gi, '').replace(/```/gi, '').trim();
           
-          res.status(200).json(JSON.parse(responseText));
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(JSON.parse(responseText)));
         } catch (error) {
           console.error('Erro na geração com IA:', error);
-          res.status(500).json({ 
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ 
             error: 'Falha ao processar requisição com a IA. Tente novamente mais tarde.', 
             details: error.message 
-          });
+          }));
         }
       });
     }

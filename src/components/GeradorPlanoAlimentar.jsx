@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { client } from '../neonClient';
-import { Sparkles, Save, Calendar, Clock, AlertTriangle, ChevronRight, CheckCircle2 } from 'lucide-react';
+import { Sparkles, Save, Calendar, Clock, AlertTriangle, ChevronRight, CheckCircle2, Download } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const DIAS_DA_SEMANA = [
   'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'
@@ -109,16 +111,31 @@ export default function GeradorPlanoAlimentar({ pacienteId, pacienteDados, theme
          };
       });
 
-      setPlanoAtual({ plano_semanal: planoNormalizado });
+      setPlanoAtual({ tipo: 'ia', plano_semanal: planoNormalizado });
       setDiaAtivo('Segunda-feira');
       showToast('Plano gerado!', 'success');
       
     } catch (err) {
       console.error(err);
-      showToast('Não foi possível gerar o plano com IA no momento. Deseja tentar novamente ou criar um Plano Manual?', 'error');
+      showToast('Não foi possível gerar o plano com IA no momento. Clique em "Plano Manual" se preferir.', 'error');
     } finally {
       setGerando(false);
     }
+  };
+
+  const criarPlanoManual = () => {
+    const planoVazio = DIAS_DA_SEMANA.map(diaNome => ({
+      dia: diaNome,
+      refeicoes: { 
+        cafe_da_manha: ['','','','',''], 
+        lanche_manha: ['','','','',''], 
+        almoco: ['','','','',''], 
+        lanche_tarde: ['','','','',''], 
+        jantar: ['','','','',''] 
+      }
+    }));
+    setPlanoAtual({ tipo: 'manual', plano_semanal: planoVazio });
+    setDiaAtivo('Segunda-feira');
   };
 
   const handleInputChange = (diaAlvo, refeicaoKey, index, valor) => {
@@ -149,6 +166,66 @@ export default function GeradorPlanoAlimentar({ pacienteId, pacienteDados, theme
     } finally {
       setSalvando(false);
     }
+  };
+
+  const gerarPDF = (planoObj) => {
+    const planoRef = planoObj || planoAtual;
+    if (!planoRef || !planoRef.plano_semanal) return;
+    
+    const doc = new jsPDF();
+    const nomePaciente = pacienteDados?.nome || 'Paciente';
+    
+    doc.setFontSize(18);
+    doc.text(`Plano Alimentar - ${nomePaciente}`, 14, 20);
+    
+    let currentY = 30;
+
+    planoRef.plano_semanal.forEach((diaData, diaIndex) => {
+      // Avoid printing days that are completely empty
+      const temConteudo = REFEICOES_ORDEM.some(refeicao => {
+         return diaData.refeicoes[refeicao.id]?.some(o => o.trim() !== '');
+      });
+
+      if (!temConteudo) return;
+
+      if (diaIndex > 0 && currentY > 250) {
+        doc.addPage();
+        currentY = 20;
+      }
+      
+      doc.setFontSize(14);
+      doc.setTextColor(16, 185, 129); // emerald-500
+      doc.text(diaData.dia, 14, currentY);
+      currentY += 8;
+
+      const body = [];
+      
+      REFEICOES_ORDEM.forEach(refeicao => {
+        const opcoes = diaData.refeicoes[refeicao.id] || [];
+        const opcoesFiltradas = opcoes.filter(o => o.trim() !== '');
+        
+        if (opcoesFiltradas.length > 0) {
+          body.push([{ content: refeicao.label, styles: { fontStyle: 'bold', fillColor: [243, 244, 246], textColor: [55, 65, 81] } }]);
+          opcoesFiltradas.forEach((opcao, i) => {
+            body.push([`Opção ${i + 1}: ${opcao}`]);
+          });
+        }
+      });
+
+      autoTable(doc, {
+        startY: currentY,
+        head: [],
+        body: body,
+        theme: 'grid',
+        styles: { fontSize: 10, cellPadding: 5, lineColor: [229, 231, 235], lineWidth: 0.1 },
+        columnStyles: { 0: { cellWidth: 'auto' } },
+        margin: { left: 14, right: 14 },
+      });
+
+      currentY = doc.lastAutoTable.finalY + 15;
+    });
+
+    doc.save(`Plano_Alimentar_${nomePaciente.replace(/\s+/g, '_')}.pdf`);
   };
 
   const styles = {
@@ -238,19 +315,35 @@ export default function GeradorPlanoAlimentar({ pacienteId, pacienteDados, theme
            <h3 style={styles.title}><Sparkles color="#10b981" size={24} /> Geração de Planos (IA)</h3>
            <p style={styles.subtitle}>Gere cardápios semanais personalizados com Inteligência Artificial.</p>
         </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
           {planoAtual && (
-             <button onClick={() => setPlanoAtual(null)} style={styles.btnSecondary}>
-               Voltar
-             </button>
+             <>
+               <button onClick={() => gerarPDF(planoAtual)} style={{ ...styles.btnSecondary, color: '#10b981' }}>
+                 <Download size={18} /> Exportar PDF
+               </button>
+               <button onClick={() => setPlanoAtual(null)} style={styles.btnSecondary}>
+                 Voltar
+               </button>
+             </>
           )}
-          <button
-            onClick={gerarPlanoComIA}
-            disabled={gerando}
-            style={{ ...styles.btnPrimary, ...(gerando ? styles.btnDisabled : {}) }}
-          >
-            {gerando ? `${mensagemLoading}` : '✨ Gerar Plano'}
-          </button>
+          {!planoAtual && (
+            <button
+              onClick={criarPlanoManual}
+              disabled={gerando}
+              style={{ ...styles.btnSecondary, ...(gerando ? styles.btnDisabled : {}) }}
+            >
+              ✍️ Criar Manual
+            </button>
+          )}
+          {!planoAtual && (
+            <button
+              onClick={gerarPlanoComIA}
+              disabled={gerando}
+              style={{ ...styles.btnPrimary, ...(gerando ? styles.btnDisabled : {}) }}
+            >
+              {gerando ? `${mensagemLoading}` : '✨ Gerar Plano com IA'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -313,19 +406,26 @@ export default function GeradorPlanoAlimentar({ pacienteId, pacienteDados, theme
                  <div style={styles.emptyState}>Nenhum plano gerado ainda.</div>
               ) : (
                  historicoPlanos.map(plano => (
-                    <button
-                       key={plano.id}
-                       onClick={() => { setPlanoAtual(plano.conteudo); setDiaAtivo('Segunda-feira'); }}
-                       style={styles.historyItem}
-                    >
-                       <div style={{ textAlign: 'left' }}>
-                          <p style={{ fontWeight: 500, margin: 0, color: isDark ? '#e5e7eb' : '#1f2937' }}>Plano Alimentar Gerado com IA</p>
-                          <p style={{ fontSize: '0.75rem', color: '#9ca3af', margin: '4px 0 0 0' }}>
-                             {new Date(plano.created_at).toLocaleString('pt-BR')}
-                          </p>
-                       </div>
-                       <ChevronRight size={20} color="#9ca3af" />
-                    </button>
+                     <div
+                        key={plano.id}
+                        style={styles.historyItem}
+                     >
+                        <div style={{ textAlign: 'left', flex: 1, cursor: 'pointer' }} onClick={() => { setPlanoAtual(plano.conteudo); setDiaAtivo('Segunda-feira'); }}>
+                           <p style={{ fontWeight: 500, margin: 0, color: isDark ? '#e5e7eb' : '#1f2937' }}>
+                              {plano.conteudo?.tipo === 'manual' ? 'Plano Alimentar Manual' : 'Plano Alimentar Gerado com IA'}
+                           </p>
+                           <p style={{ fontSize: '0.75rem', color: '#9ca3af', margin: '4px 0 0 0' }}>
+                              {new Date(plano.created_at).toLocaleString('pt-BR')}
+                           </p>
+                        </div>
+                        <button 
+                           onClick={(e) => { e.stopPropagation(); gerarPDF(plano.conteudo); }}
+                           style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '8px', display: 'flex', alignItems: 'center' }}
+                           title="Baixar PDF"
+                        >
+                           <Download size={20} color="#10b981" />
+                        </button>
+                     </div>
                  ))
               )}
            </div>
