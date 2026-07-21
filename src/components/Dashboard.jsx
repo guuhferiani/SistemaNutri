@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../supabaseClient';
+import { client } from '../neonClient';
 import { LogOut, User, Mail, Calendar, Sparkles, Sun, Moon, LayoutDashboard, Users, MessageSquare, ArrowLeft, Phone, Target, AlertTriangle } from 'lucide-react';
+import GeradorPlanoAlimentar from './GeradorPlanoAlimentar';
 
 const getIMCCategory = (imc) => {
   if (!imc) return '';
@@ -271,13 +272,13 @@ export default function Dashboard({ session, theme, toggleTheme }) {
 
       let res;
       if (editingPatientId) {
-        res = await supabase
+        res = await client
           .from('pacientes')
           .update(payload)
           .eq('id', editingPatientId)
           .select();
       } else {
-        res = await supabase
+        res = await client
           .from('pacientes')
           .insert([payload])
           .select();
@@ -415,7 +416,7 @@ export default function Dashboard({ session, theme, toggleTheme }) {
         observacoes: editFormData.observacoes || null,
       };
 
-      const { error } = await supabase
+      const { error } = await client
         .from('pacientes')
         .update(payload)
         .eq('id', selectedPatient.id);
@@ -453,13 +454,13 @@ export default function Dashboard({ session, theme, toggleTheme }) {
       };
 
       if (editingConsultationId) {
-        const { error } = await supabase
+        const { error } = await client
           .from('consultas')
           .update(payload)
           .eq('id', editingConsultationId);
         if (error) throw error;
       } else {
-        const { error } = await supabase
+        const { error } = await client
           .from('consultas')
           .insert([payload]);
         if (error) throw error;
@@ -487,16 +488,30 @@ export default function Dashboard({ session, theme, toggleTheme }) {
     return JSON.stringify(conteudo, null, 2);
   };
 
-  const renderWeightChart = (consultations) => {
-    const validConsultations = [...(consultations || [])]
+  const renderWeightChart = (patient) => {
+    const consultations = patient.consultas || [];
+    let validConsultations = [...consultations]
       .filter(c => c.peso)
-      .sort((a, b) => new Date(a.data_consulta) - new Date(b.data_consulta));
+      .map(c => ({
+        date: c.data_consulta,
+        weight: parseFloat(c.peso)
+      }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // Incluir o peso inicial como o primeiro ponto do gráfico se existir
+    if (patient.peso_inicial) {
+      validConsultations.unshift({
+        date: patient.created_at ? patient.created_at.split('T')[0] : 'Início',
+        weight: parseFloat(patient.peso_inicial),
+        isInitial: true
+      });
+    }
 
     if (validConsultations.length === 0) {
       return (
         <div style={styles.emptyChartContainer}>
           <AlertTriangle size={32} style={{ color: 'hsl(var(--muted-foreground))', marginBottom: 12 }} />
-          <p style={styles.emptyText}>Nenhuma consulta registrada ainda</p>
+          <p style={styles.emptyText}>Nenhuma consulta com peso registrado ainda</p>
         </div>
       );
     }
@@ -506,7 +521,7 @@ export default function Dashboard({ session, theme, toggleTheme }) {
     const paddingX = 60;
     const paddingY = 40;
 
-    const weights = validConsultations.map(c => parseFloat(c.peso));
+    const weights = validConsultations.map(c => c.weight);
     let minW = Math.min(...weights);
     let maxW = Math.max(...weights);
     
@@ -523,8 +538,8 @@ export default function Dashboard({ session, theme, toggleTheme }) {
       const x = paddingX + (validConsultations.length > 1 
         ? (i * (svgWidth - 2 * paddingX) / (validConsultations.length - 1))
         : (svgWidth - 2 * paddingX) / 2);
-      const y = svgHeight - paddingY - ((parseFloat(c.peso) - minW) * (svgHeight - 2 * paddingY) / (maxW - minW));
-      return { x, y, date: c.data_consulta, weight: c.peso };
+      const y = svgHeight - paddingY - ((c.weight - minW) * (svgHeight - 2 * paddingY) / (maxW - minW));
+      return { x, y, date: c.date, weight: c.weight, isInitial: c.isInitial };
     });
 
     const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
@@ -583,19 +598,19 @@ export default function Dashboard({ session, theme, toggleTheme }) {
                 y={p.y - 12}
                 fill="hsl(var(--foreground))"
                 fontSize="12"
-                fontWeight="700"
+                fontWeight="500"
                 textAnchor="middle"
               >
-                {parseFloat(p.weight).toFixed(1)}
+                {parseFloat(p.weight).toFixed(1)} kg
               </text>
               <text
                 x={p.x}
-                y={svgHeight - paddingY + 22}
+                y={p.y + 20}
                 fill="hsl(var(--muted-foreground))"
                 fontSize="10"
                 textAnchor="middle"
               >
-                {new Date(p.date + 'T00:00:00').toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'})}
+                {p.isInitial ? 'Início' : new Date(p.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
               </text>
             </g>
           ))}
@@ -652,7 +667,7 @@ export default function Dashboard({ session, theme, toggleTheme }) {
     async function getProfile() {
       try {
         const { user } = session;
-        const { data, error } = await supabase
+        const { data, error } = await client
           .from('nutricionistas')
           .select('nome, email')
           .eq('id', user.id)
@@ -672,7 +687,7 @@ export default function Dashboard({ session, theme, toggleTheme }) {
   const fetchPatientsData = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      const { data, error } = await client
         .from('pacientes')
         .select(`
           *,
@@ -708,7 +723,7 @@ export default function Dashboard({ session, theme, toggleTheme }) {
   }, [session]);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await client.auth.signOut();
   };
 
   // Helper to filter "Pacientes sem retorno"
@@ -1811,7 +1826,7 @@ export default function Dashboard({ session, theme, toggleTheme }) {
                 {/* Weight Chart Card */}
                 <div className="glass-card" style={{ ...styles.consultationsCard, marginBottom: '24px' }}>
                   <h2 style={styles.cardTitle}>Evolução de Peso</h2>
-                  {renderWeightChart(selectedPatient.consultas)}
+                  {renderWeightChart(selectedPatient)}
                 </div>
 
                 {/* Consultations List Card */}
@@ -1894,73 +1909,11 @@ export default function Dashboard({ session, theme, toggleTheme }) {
 
             {profileSection === 'planos' && (
               <div style={styles.sectionContainer}>
-                {selectedPlanId ? (
-                  // View plan contents
-                  <div className="glass-card" style={styles.consultationsCard}>
-                    <div style={styles.listHeader}>
-                      <h2 style={styles.cardTitle}>
-                        Plano Alimentar - Gerado em{' '}
-                        {new Date(
-                          selectedPatient.planos_alimentares.find(p => p.id === selectedPlanId).created_at
-                        ).toLocaleDateString('pt-BR')}
-                      </h2>
-                      <button
-                        onClick={() => setSelectedPlanId(null)}
-                        style={styles.backButton}
-                      >
-                        &larr; Voltar ao histórico
-                      </button>
-                    </div>
-                    <div style={styles.planContentCard}>
-                      <pre style={styles.planContentText}>
-                        {renderPlanContent(
-                          selectedPatient.planos_alimentares.find(p => p.id === selectedPlanId).conteudo
-                        )}
-                      </pre>
-                    </div>
-                  </div>
-                ) : (
-                  // View list of plans
-                  <div className="glass-card" style={styles.consultationsCard}>
-                    <div style={styles.listHeader}>
-                      <h2 style={styles.cardTitle}>Planos Alimentares</h2>
-                      <button
-                        disabled
-                        style={{ ...styles.newPatientButton, opacity: 0.6, cursor: 'not-allowed' }}
-                        title="Gerador de plano alimentar será habilitado no próximo prompt"
-                      >
-                        Gerar Plano Alimentar
-                      </button>
-                    </div>
-
-                    {selectedPatient.planos_alimentares && selectedPatient.planos_alimentares.length > 0 ? (
-                      <div style={styles.planHistoryList}>
-                        {[...selectedPatient.planos_alimentares]
-                          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                          .map((plan) => (
-                            <div
-                              key={plan.id}
-                              onClick={() => setSelectedPlanId(plan.id)}
-                              style={styles.patientListItemLink}
-                            >
-                              <div style={styles.patientListItemInfo}>
-                                <span style={styles.patientItemName}>
-                                  Plano Alimentar
-                                </span>
-                                <span style={styles.patientItemSub}>
-                                  Gerado em: {new Date(plan.created_at).toLocaleDateString('pt-BR')} às{' '}
-                                  {new Date(plan.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                                </span>
-                              </div>
-                              <span style={styles.viewLink}>Ver Conteúdo &rarr;</span>
-                            </div>
-                          ))}
-                      </div>
-                    ) : (
-                      <p style={styles.emptyText}>Nenhum plano alimentar gerado ainda</p>
-                    )}
-                  </div>
-                )}
+                <GeradorPlanoAlimentar 
+                   pacienteId={selectedPatient.id} 
+                   pacienteDados={selectedPatient} 
+                   theme={theme} 
+                />
               </div>
             )}
           </div>

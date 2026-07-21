@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabaseClient';
+import { client } from './neonClient';
 import Auth from './components/Auth';
 import Dashboard from './components/Dashboard';
 import './App.css';
@@ -29,18 +29,31 @@ export default function App() {
 
   useEffect(() => {
     // Fetch initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    client.auth.getSession().then(async (result) => {
+      if (result?.data?.session) {
+        const user = result.data.user;
+        // Better Auth returns { session, user } in data. 
+        // Supabase returned session containing user.
+        // We merge user inside session to keep compatibility with Dashboard.jsx
+        setSession({
+          ...result.data.session,
+          user: user
+        });
+
+        // Ensure user exists in nutricionistas table to prevent foreign key errors
+        if (user) {
+          const { data, error } = await client.from('nutricionistas').select('id').eq('id', user.id);
+          if (!error && data && data.length === 0) {
+            await client.from('nutricionistas').insert([{
+              id: user.id,
+              nome: user.name || 'Nutricionista',
+              email: user.email
+            }]);
+          }
+        }
+      }
       setLoading(false);
     });
-
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
   }, []);
 
   if (loading) {

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '../supabaseClient';
+import { client } from '../neonClient';
 import { Eye, EyeOff, Mail, Lock, User, ShieldAlert, Sun, Moon } from 'lucide-react';
 
 export default function Auth({ theme, toggleTheme }) {
@@ -31,67 +31,81 @@ export default function Auth({ theme, toggleTheme }) {
     setSuccessMsg('');
     setLoading(true);
 
-    if (password.length < 6) {
-      setErrorMsg('A senha deve ter no mínimo 6 caracteres.');
+    if (password.length < 8) {
+      setErrorMsg('A senha deve ter no mínimo 8 caracteres.');
       setLoading(false);
       return;
     }
 
-    if (isLogin) {
-      // Login flow
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+    try {
+      if (isLogin) {
+        // Login flow
+        const { data, error } = await client.auth.signIn.email({
+          email,
+          password,
+        });
 
-      if (error) {
-        setErrorMsg(error.message === 'Invalid login credentials' 
-          ? 'Email ou senha incorretos. Por favor, tente novamente.' 
-          : error.message);
-      }
-    } else {
-      // Signup flow
-      if (password !== confirmPassword) {
-        setErrorMsg('As senhas não coincidem.');
-        setLoading(false);
-        return;
-      }
-
-      if (!fullName.trim()) {
-        setErrorMsg('Por favor, informe seu nome completo.');
-        setLoading(false);
-        return;
-      }
-
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-
-      if (error) {
-        setErrorMsg(error.message);
-      } else if (data?.user) {
-        // Insert into public.nutricionistas table
-        const { error: dbError } = await supabase
-          .from('nutricionistas')
-          .insert([
-            {
-              id: data.user.id,
-              nome: fullName,
-              email: email,
-            }
-          ]);
-
-        if (dbError) {
-          setErrorMsg('Conta criada, mas houve um erro ao salvar o perfil: ' + dbError.message);
+        if (error) {
+          setErrorMsg(error.message === 'Invalid login credentials' || error.message.includes('credential')
+            ? 'Email ou senha incorretos. Por favor, tente novamente.' 
+            : error.message);
         } else {
-          setSuccessMsg('Cadastro realizado com sucesso! Faça login para entrar.');
-          setIsLogin(true);
-          resetForm();
+          window.location.reload();
+        }
+      } else {
+        // Signup flow
+        if (password !== confirmPassword) {
+          setErrorMsg('As senhas não coincidem.');
+          setLoading(false);
+          return;
+        }
+
+        if (!fullName.trim()) {
+          setErrorMsg('Por favor, informe seu nome completo.');
+          setLoading(false);
+          return;
+        }
+
+        const { data, error } = await client.auth.signUp.email({
+          name: fullName,
+          email,
+          password,
+        });
+
+        if (error) {
+          setErrorMsg(error.message);
+        } else if (data?.user) {
+          // Insert into public.nutricionistas table
+          const { error: dbError } = await client
+            .from('nutricionistas')
+            .insert([
+              {
+                id: data.user.id,
+                nome: fullName,
+                email: email,
+              }
+            ]);
+
+          if (dbError) {
+            setErrorMsg('Conta criada, mas houve um erro ao salvar o perfil: ' + dbError.message);
+          } else {
+            setSuccessMsg('Cadastro realizado com sucesso! Faça login para entrar.');
+            setIsLogin(true);
+            resetForm();
+          }
         }
       }
+    } catch (err) {
+      console.error("Auth error:", err);
+      // Extrair mensagem amigável caso a API retorne em inglês
+      let msg = err.message || 'Ocorreu um erro inesperado.';
+      if (msg.includes('Password does not meet security requirements')) {
+        msg = 'A senha não atende aos requisitos de segurança (mínimo de 8 caracteres).';
+      }
+      setErrorMsg(msg);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -165,7 +179,7 @@ export default function Auth({ theme, toggleTheme }) {
               <Lock size={18} style={styles.inputIcon} />
               <input
                 type={showPassword ? 'text' : 'password'}
-                placeholder="Mínimo de 6 caracteres"
+                placeholder="Mínimo de 8 caracteres"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 style={styles.input}
