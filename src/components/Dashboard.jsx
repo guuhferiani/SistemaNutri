@@ -22,6 +22,8 @@ export default function Dashboard({ session, theme, toggleTheme }) {
 
   // Form states and search state for Prompt 4
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState('todos'); // 'todos', 'ativos', 'inativos'
+  const [filterGoal, setFilterGoal] = useState('todos');
   const [activeFormTab, setActiveFormTab] = useState('pessoal'); // 'pessoal', 'clinico', 'habitos'
   const [savingPatient, setSavingPatient] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -42,6 +44,7 @@ export default function Dashboard({ session, theme, toggleTheme }) {
     peso: '',
     cintura: '',
     quadril: '',
+    massa_gorda: '',
     percentual_gordura: '',
     observacoes: '',
     proximo_retorno: '',
@@ -488,6 +491,128 @@ export default function Dashboard({ session, theme, toggleTheme }) {
     return JSON.stringify(conteudo, null, 2);
   };
 
+  const renderBodyCompositionChart = (patient) => {
+    const consultations = patient.consultas || [];
+    let validConsultations = [...consultations]
+      .filter(c => c.percentual_gordura)
+      .map(c => ({
+        date: c.data_consulta,
+        fat: parseFloat(c.percentual_gordura)
+      }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    if (validConsultations.length === 0) {
+      return (
+        <div style={styles.emptyChartContainer}>
+          <AlertTriangle size={32} style={{ color: 'hsl(var(--muted-foreground))', marginBottom: 12 }} />
+          <p style={styles.emptyText}>Nenhuma consulta com percentual de gordura registrado</p>
+        </div>
+      );
+    }
+
+    const svgWidth = 650;
+    const svgHeight = 250;
+    const paddingX = 60;
+    const paddingY = 40;
+
+    const fats = validConsultations.map(c => c.fat);
+    let minW = Math.min(...fats);
+    let maxW = Math.max(...fats);
+    
+    if (minW === maxW) {
+      minW = Math.max(0, minW - 2);
+      maxW = maxW + 2;
+    } else {
+      const margin = (maxW - minW) * 0.15;
+      minW = Math.max(0, minW - margin);
+      maxW = maxW + margin;
+    }
+
+    const points = validConsultations.map((c, i) => {
+      const x = paddingX + (validConsultations.length > 1 
+        ? (i * (svgWidth - 2 * paddingX) / (validConsultations.length - 1))
+        : (svgWidth - 2 * paddingX) / 2);
+      const y = svgHeight - paddingY - ((c.fat - minW) * (svgHeight - 2 * paddingY) / (maxW - minW));
+      return { x, y, date: c.date, fat: c.fat };
+    });
+
+    const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+
+    return (
+      <div style={styles.chartWrapper}>
+        <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} style={styles.chartSvg}>
+          {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
+            const y = paddingY + ratio * (svgHeight - 2 * paddingY);
+            const wLabel = (maxW - ratio * (maxW - minW)).toFixed(1);
+            return (
+              <g key={idx}>
+                <line
+                  x1={paddingX}
+                  y1={y}
+                  x2={svgWidth - paddingX}
+                  y2={y}
+                  stroke="hsl(var(--border))"
+                  strokeWidth="1"
+                  strokeDasharray="4 4"
+                />
+                <text
+                  x={paddingX - 10}
+                  y={y + 4}
+                  fill="hsl(var(--muted-foreground))"
+                  fontSize="11"
+                  textAnchor="end"
+                >
+                  {wLabel}%
+                </text>
+              </g>
+            );
+          })}
+
+          <path
+            d={linePath}
+            fill="none"
+            stroke="#ef4444"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+
+          {points.map((p, i) => (
+            <g key={i}>
+              <circle
+                cx={p.x}
+                cy={p.y}
+                r="6"
+                fill="#ef4444"
+                stroke="hsl(var(--background))"
+                strokeWidth="2"
+              />
+              <text
+                x={p.x}
+                y={p.y - 12}
+                fill="#ef4444"
+                fontSize="12"
+                fontWeight="bold"
+                textAnchor="middle"
+              >
+                {p.fat}%
+              </text>
+              <text
+                x={p.x}
+                y={svgHeight - 15}
+                fill="hsl(var(--muted-foreground))"
+                fontSize="11"
+                textAnchor="middle"
+              >
+                {p.date.split('-').reverse().slice(0,2).join('/')}
+              </text>
+            </g>
+          ))}
+        </svg>
+      </div>
+    );
+  };
+
   const renderWeightChart = (patient) => {
     const consultations = patient.consultas || [];
     let validConsultations = [...consultations]
@@ -724,6 +849,7 @@ export default function Dashboard({ session, theme, toggleTheme }) {
 
   const handleLogout = async () => {
     await client.auth.signOut();
+    window.location.reload();
   };
 
   // Helper to filter "Pacientes sem retorno"
@@ -765,7 +891,9 @@ export default function Dashboard({ session, theme, toggleTheme }) {
   const getLatestConsultationDate = (patient) => {
     if (!patient.consultas || patient.consultas.length === 0) return 'Sem consultas';
     const sorted = [...patient.consultas].sort((a, b) => new Date(b.data_consulta) - new Date(a.data_consulta));
-    return sorted[0].data_consulta;
+    const dateStr = sorted[0].data_consulta;
+    if (!dateStr) return '';
+    return dateStr.includes('-') ? dateStr.split('-').reverse().join('/') : dateStr;
   };
 
   const getPatientGoal = (patient) => {
@@ -1320,7 +1448,7 @@ export default function Dashboard({ session, theme, toggleTheme }) {
         </nav>
 
         <div style={styles.sidebarFooter}>
-          <div style={styles.userInfo}>
+          <div style={{ ...styles.userInfo, marginBottom: '8px', padding: '0 8px' }}>
             <div style={styles.userAvatar}>
               {(profile?.nome || 'N').charAt(0).toUpperCase()}
             </div>
@@ -1330,12 +1458,14 @@ export default function Dashboard({ session, theme, toggleTheme }) {
             </div>
           </div>
 
-          <div style={styles.sidebarActions}>
-            <button onClick={toggleTheme} style={styles.themeToggle} title="Alternar tema">
-              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <button onClick={toggleTheme} style={styles.navItem} title="Alternar tema">
+              {theme === 'dark' ? <Sun size={20} style={styles.navIcon} /> : <Moon size={20} style={styles.navIcon} />}
+              <span>{theme === 'dark' ? 'Modo Claro' : 'Modo Escuro'}</span>
             </button>
-            <button onClick={handleLogout} style={styles.logoutButton} title="Sair da conta">
-              <LogOut size={18} />
+            <button onClick={handleLogout} style={{ ...styles.navItem, color: 'hsl(var(--error))' }} title="Sair da conta">
+              <LogOut size={20} style={styles.navIcon} />
+              <span>Sair</span>
             </button>
           </div>
         </div>
@@ -1825,8 +1955,16 @@ export default function Dashboard({ session, theme, toggleTheme }) {
               <div style={styles.sectionContainer}>
                 {/* Weight Chart Card */}
                 <div className="glass-card" style={{ ...styles.consultationsCard, marginBottom: '24px' }}>
-                  <h2 style={styles.cardTitle}>Evolução de Peso</h2>
-                  {renderWeightChart(selectedPatient)}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px', width: '100%' }}>
+                     <div style={{ width: '100%' }}>
+                       <h4 style={styles.cardTitle}>Evolução de Peso</h4>
+                       {renderWeightChart(selectedPatient)}
+                     </div>
+                     <div style={{ width: '100%' }}>
+                       <h4 style={styles.cardTitle}>Composição Corporal (% Gordura)</h4>
+                       {renderBodyCompositionChart(selectedPatient)}
+                     </div>
+                  </div>
                 </div>
 
                 {/* Consultations List Card */}
@@ -1871,6 +2009,7 @@ export default function Dashboard({ session, theme, toggleTheme }) {
                                   setConsultationForm({
                                     data_consulta: c.data_consulta || new Date().toISOString().split('T')[0],
                                     peso: c.peso || '',
+                                    massa_gorda: c.massa_gorda || '',
                                     cintura: c.cintura || '',
                                     quadril: c.quadril || '',
                                     percentual_gordura: c.percentual_gordura || '',
@@ -2011,17 +2150,88 @@ export default function Dashboard({ session, theme, toggleTheme }) {
                   Novo Paciente
                 </button>
               </div>
+              
+              {(() => {
+                 const getIsActive = (patient) => {
+                    if (!patient.consultas || patient.consultas.length === 0) return true;
+                    const today = new Date(); today.setHours(0, 0, 0, 0);
+                    const validConsultations = patient.consultas.filter(c => c && c.data_consulta);
+                    if (validConsultations.length === 0) return true;
+                    const latestConsultation = [...validConsultations].sort((a, b) => new Date(b.data_consulta) - new Date(a.data_consulta))[0];
+                    const diffDays = Math.ceil(Math.abs(today - new Date(latestConsultation.data_consulta)) / (1000 * 60 * 60 * 24));
+                    const hasUpcomingReturn = patient.consultas.some((c) => {
+                       if (!c || !c.proximo_retorno) return false;
+                       const rDate = new Date(c.proximo_retorno); rDate.setHours(0,0,0,0);
+                       return rDate >= today;
+                    });
+                    return diffDays <= 60 || hasUpcomingReturn;
+                 };
 
+                 const processedPatients = patients
+                    .filter(p => p.nome && p.nome.toLowerCase().includes(searchTerm.toLowerCase()))
+                    .filter(p => filterStatus === 'todos' ? true : filterStatus === 'ativos' ? getIsActive(p) : !getIsActive(p))
+                    .filter(p => {
+                       if (filterGoal === 'todos') return true;
+                       const goal = getPatientGoal(p);
+                       return goal && goal.toLowerCase().includes(filterGoal.toLowerCase());
+                    });
+
+                 return (
+                   <>
               {patients.length > 0 && (
-                <div style={styles.searchBarContainer}>
-                  <input
-                    type="text"
-                    placeholder="Buscar paciente por nome..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    style={styles.searchInput}
-                  />
-                </div>
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+                     <div style={{ backgroundColor: theme === 'dark' ? '#374151' : '#f3f4f6', padding: '16px', borderRadius: '12px', textAlign: 'center' }}>
+                        <h4 style={{ margin: 0, color: theme === 'dark' ? '#9ca3af' : '#6b7280', fontSize: '0.875rem' }}>Pacientes Ativos</h4>
+                        <p style={{ margin: '8px 0 0 0', fontSize: '1.5rem', fontWeight: 'bold', color: '#10b981' }}>{patients.filter(getIsActive).length}</p>
+                     </div>
+                     <div style={{ backgroundColor: theme === 'dark' ? '#374151' : '#f3f4f6', padding: '16px', borderRadius: '12px', textAlign: 'center' }}>
+                        <h4 style={{ margin: 0, color: theme === 'dark' ? '#9ca3af' : '#6b7280', fontSize: '0.875rem' }}>Retornos em 7 Dias</h4>
+                        <p style={{ margin: '8px 0 0 0', fontSize: '1.5rem', fontWeight: 'bold', color: '#f59e0b' }}>
+                           {patients.filter(p => p.consultas?.some(c => {
+                              if(!c || !c.proximo_retorno) return false;
+                              const retDate = new Date(c.proximo_retorno);
+                              const today = new Date(); today.setHours(0,0,0,0);
+                              const in7Days = new Date(today); in7Days.setDate(today.getDate() + 7);
+                              return retDate >= today && retDate <= in7Days;
+                           })).length}
+                        </p>
+                     </div>
+                     <div style={{ backgroundColor: theme === 'dark' ? '#374151' : '#f3f4f6', padding: '16px', borderRadius: '12px', textAlign: 'center' }}>
+                        <h4 style={{ margin: 0, color: theme === 'dark' ? '#9ca3af' : '#6b7280', fontSize: '0.875rem' }}>Pacientes Inativos</h4>
+                        <p style={{ margin: '8px 0 0 0', fontSize: '1.5rem', fontWeight: 'bold', color: '#ef4444' }}>{patients.filter(p => !getIsActive(p)).length}</p>
+                     </div>
+                  </div>
+
+                  <div style={{ ...styles.searchBarContainer, display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <input
+                      type="text"
+                      placeholder="Buscar paciente por nome..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      style={{ ...styles.searchInput, flex: '1 1 250px' }}
+                    />
+                    <select 
+                      value={filterStatus} 
+                      onChange={(e) => setFilterStatus(e.target.value)}
+                      style={{ ...styles.searchInput, flex: '0 0 auto', width: 'auto' }}
+                    >
+                      <option value="todos">Status: Todos</option>
+                      <option value="ativos">Status: Ativos</option>
+                      <option value="inativos">Status: Inativos</option>
+                    </select>
+                    <select 
+                      value={filterGoal} 
+                      onChange={(e) => setFilterGoal(e.target.value)}
+                      style={{ ...styles.searchInput, flex: '0 0 auto', width: 'auto' }}
+                    >
+                      <option value="todos">Objetivo: Todos</option>
+                      <option value="emagrecimento">Emagrecimento</option>
+                      <option value="hipertrofia">Hipertrofia</option>
+                      <option value="saude">Saúde / Qualidade de Vida</option>
+                    </select>
+                  </div>
+                </>
               )}
 
               {loading ? (
@@ -2030,14 +2240,13 @@ export default function Dashboard({ session, theme, toggleTheme }) {
                 <div style={styles.emptyContainer}>
                   <p style={styles.emptyText}>Nenhum paciente cadastrado ainda</p>
                 </div>
-              ) : patients.filter(p => p.nome.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 ? (
+              ) : processedPatients.length === 0 ? (
                 <div style={styles.emptyContainer}>
-                  <p style={styles.emptyText}>Nenhum paciente encontrado para a busca "{searchTerm}"</p>
+                  <p style={styles.emptyText}>Nenhum paciente encontrado para os filtros atuais</p>
                 </div>
               ) : (
                 <div style={styles.patientGridList}>
-                  {patients
-                    .filter(p => p.nome.toLowerCase().includes(searchTerm.toLowerCase()))
+                  {processedPatients
                     .map((patient) => (
                       <div
                         key={patient.id}
@@ -2061,6 +2270,9 @@ export default function Dashboard({ session, theme, toggleTheme }) {
                     ))}
                 </div>
               )}
+              </>
+              )
+              })()}
             </div>
           </div>
         )}
@@ -2104,14 +2316,52 @@ export default function Dashboard({ session, theme, toggleTheme }) {
                   </div>
 
                   <div style={styles.formGroup}>
-                    <label style={styles.formLabel}>Peso Atual (kg) *</label>
+                    <label style={styles.formLabel}>Peso (kg) *</label>
                     <input
                       type="number"
-                      step="0.1"
+                      step="0.01"
                       required
                       placeholder="Ex: 73.2"
                       value={consultationForm.peso}
-                      onChange={(e) => setConsultationForm({ ...consultationForm, peso: e.target.value })}
+                      onChange={(e) => {
+                        const newPeso = e.target.value;
+                        let newPercentual = consultationForm.percentual_gordura;
+                        if (consultationForm.massa_gorda && newPeso && parseFloat(newPeso) > 0) {
+                           newPercentual = ((parseFloat(consultationForm.massa_gorda) / parseFloat(newPeso)) * 100).toFixed(1);
+                        }
+                        setConsultationForm({ ...consultationForm, peso: newPeso, percentual_gordura: newPercentual });
+                      }}
+                      style={styles.formInput}
+                    />
+                  </div>
+
+                  <div style={styles.formGroup}>
+                    <label style={styles.formLabel}>Massa Gorda (kg)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Opcional para autocalcular %"
+                      value={consultationForm.massa_gorda}
+                      onChange={(e) => {
+                        const newMassa = e.target.value;
+                        let newPercentual = consultationForm.percentual_gordura;
+                        if (newMassa && consultationForm.peso && parseFloat(consultationForm.peso) > 0) {
+                           newPercentual = ((parseFloat(newMassa) / parseFloat(consultationForm.peso)) * 100).toFixed(1);
+                        }
+                        setConsultationForm({ ...consultationForm, massa_gorda: newMassa, percentual_gordura: newPercentual });
+                      }}
+                      style={styles.formInput}
+                    />
+                  </div>
+
+                  <div style={styles.formGroup}>
+                    <label style={styles.formLabel}>% de Gordura</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="Ex: 18.5"
+                      value={consultationForm.percentual_gordura}
+                      onChange={(e) => setConsultationForm({ ...consultationForm, percentual_gordura: e.target.value })}
                       style={styles.formInput}
                     />
                   </div>
@@ -2134,18 +2384,6 @@ export default function Dashboard({ session, theme, toggleTheme }) {
                       placeholder="Ex: 96"
                       value={consultationForm.quadril}
                       onChange={(e) => setConsultationForm({ ...consultationForm, quadril: e.target.value })}
-                      style={styles.formInput}
-                    />
-                  </div>
-
-                  <div style={styles.formGroup}>
-                    <label style={styles.formLabel}>% de Gordura - Opcional</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      placeholder="Ex: 18.5"
-                      value={consultationForm.percentual_gordura}
-                      onChange={(e) => setConsultationForm({ ...consultationForm, percentual_gordura: e.target.value })}
                       style={styles.formInput}
                     />
                   </div>
