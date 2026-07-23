@@ -11,7 +11,7 @@ export default function Home() {
     client.auth.getSession().then(async (result) => {
       const session = result?.data?.session;
       if (session) {
-        const user = result.data.user;
+        const user = result?.data?.user;
         if (user) {
           // Garante que o nutricionista existe no banco de dados
           const { data, error } = await client
